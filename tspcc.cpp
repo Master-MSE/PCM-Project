@@ -7,6 +7,7 @@
 #include "graph.hpp"
 #include "path.hpp"
 #include "tspfile.hpp"
+#include "listcc.hpp"
 
 
 enum Verbosity {
