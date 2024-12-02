@@ -11,6 +11,7 @@
 #include "graph.hpp"
 #include "path.hpp"
 #include "atomic.hpp"
+#include <iostream>
 
 template <typename T>
 class listcc
@@ -24,10 +25,23 @@ private:
 		Node(U v): nextref(0,0), value(v) {}
 	};
 
-    atomic_stamped<Node<T>*> headref;
-	atomic_stamped<Node<T>*> tailref;
-
+    atomic_stamped<Node<T>> headref;
+	atomic_stamped<Node<T>> tailref;
 public:
+
+    void printList() {
+        uint64_t stamp;
+        Node<T> *current = headref.get(stamp);
+        
+        int i = 0;
+        while(current) {
+            uint64_t nstamp;
+            Node<T> *next = current->nextref.get(nstamp);
+
+            std::cout << i << " : " << current->value;
+            current = next;
+        }
+    }
 
     void enqueue(T value)
 	{
@@ -65,25 +79,26 @@ public:
 					tailref.cas(tail, next, tailStamp, tailStamp+1);
 				} else {
 					T value = next.value;
-					if (headref.cas(head, next, headStamp, headStamp+1))
+					if (headref.cas(head, next, headStamp, headStamp+1)) {
 						delete head;
 						return value;
+                    }
 				}
 			}
 		}
 	}
 
     listcc() {
-        Node<T> *node = new Node<T>(NULL);
+        Node<T> *node = new Node<T>(0);
 		headref.set(node, 0);
         tailref.set(node, 0);
     };
     ~listcc() {
-        int stamp;
+        uint64_t stamp;
         Node<T> *current = headref.get(stamp);
         
         while(current) {
-            int nstamp;
+            uint64_t nstamp;
             Node<T> *next = current->nextref.get(nstamp);
 
             delete current;
@@ -92,14 +107,5 @@ public:
         
     };
 };
-
-// listcc::listcc(/* args */)
-// {
-// }
-
-// listcc::~listcc()
-// {
-// }
-
 
 #endif

@@ -121,6 +121,14 @@ void print_counters()
 
 int main(int argc, char* argv[])
 {
+
+	listcc<int> list = listcc<int>();
+
+	// list.enqueue(3);
+	// list.printList();
+
+
+
 	char* fname = 0;
 	if (argc == 2) {
 		fname = argv[1];
