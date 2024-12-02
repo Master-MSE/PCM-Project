@@ -12,7 +12,7 @@ tspcc.o: tspcc.cpp graph.hpp path.hpp tspfile.hpp
 	c++ $(CFLAGS) -c tspcc.cpp
 
 atomic: atomic.cpp
-	clang++ -o atomic $(LDFLAGS) atomic.cpp
+	clang++ -o atomic -latomic $(LDFLAGS) atomic.cpp
 
 omp:
 	make tspcc CFLAGS="-fopenmp -O3" LDFLAGS="-fopenmp -O3"
