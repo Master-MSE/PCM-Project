@@ -19,7 +19,7 @@ private:
     struct Node {
         T value;
         atomic_stamped<Node> nextref;
-		 Node(T val) : value(val), nextref(nullptr, 0) {}
+		Node(T val) : value(val), nextref(nullptr, 0) {}
     };
 
     atomic_stamped<Node> headref;
