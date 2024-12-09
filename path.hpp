@@ -9,26 +9,26 @@
 #ifndef _path_hpp
 #define _path_hpp
 
+#include "graph.hpp"
+
 class Path {
 private:
+	const static int MAX = 32;
 	int _size;
 	int _distance;
-	int* _nodes;
+	char _nodes[MAX];
+	int _bitmap;
 	Graph* _graph;
 public:
 	~Path()
 	{
 		clear();
-		delete[] _nodes;
-		_nodes = 0;
 		_graph = 0;
 	}
 
 	Path(Graph* graph)
 	{
 		_graph = graph;
-		_nodes = new int[max() + 1];
-		_distance = 0;
 		clear();
 	}
 
@@ -36,7 +36,7 @@ public:
 	int size() const { return _size; }
 	bool leaf() const { return (_size == max()); }
 	int distance() const { return _distance; }
-	void clear() { _size = _distance = 0; }
+	void clear() { _size = _distance = _bitmap = 0; }
 
 	void add(int node)
 	{
@@ -46,6 +46,7 @@ public:
 				int distance = _graph->distance(last, node);
 				_distance += distance;
 			}
+			_bitmap |= (1<<node);
 			_nodes[_size ++] = node;
 		}
 	}
@@ -59,26 +60,21 @@ public:
 				int distance = _graph->distance(node, last);
 				_distance -= distance;
 			}
+			_bitmap &= ~(1<<last);
 		}
 	}
 
 	bool contains(int node) const
 	{
-		for (int i=0; i<_size; i++)
-			if (_nodes[i] == node)
-				return true;
-		return false;
+		return _bitmap & (1<<node);
 	}
 
 	void copy(Path* o)
 	{
-		if (max() != o->max()) {
-			delete[] _nodes;
-			_nodes = new int[o->max() + 1];
-		}
 		_graph = o->_graph;
 		_size = o->_size;
 		_distance = o->_distance;
+		_bitmap = o->_bitmap;
 		for (int i=0; i<_size; i++)
 			_nodes[i] = o->_nodes[i];
 	}
@@ -87,7 +83,7 @@ public:
 	{
 		os << '[' << _distance;
 		for (int i=0; i<_size; i++)
-			os << (i?',':':') << ' ' << _nodes[i];
+			os << (i?',':':') << ' ' << (int)_nodes[i];
 		os << ']';
 	}
 };
