@@ -12,7 +12,8 @@
 
 #define _CRT_SECURE_NO_WARNINGS // evite les erreurs
 
-#define NUM_THREADS 3
+#define NUM_THREADS 5
+#define SEQUENTIAL_THRESHOLD 8
 
 enum Verbosity {
 	VER_NONE = 0,
@@ -32,8 +33,10 @@ static struct {
 		int* bound;	// # of bound operations per level
 	} counter;
 	int size;
+	int graph_size;
 	int total;		// number of paths to check
 	int* fact;
+	listcc<Path *> list;
 } global;
 
 static const struct {
@@ -124,7 +127,62 @@ void print_counters()
 }
 
 void *thread_routine(void *thread_id) {
-	std::cout << "Hello from thread " << (long)thread_id << std::endl;
+
+	while (true)
+	{
+		Path *current;
+		try {
+			current = global.list.dequeue();
+		}
+		catch(const std::exception& e) {
+			std::cerr << e.what() << '\n';
+			continue;
+		}
+
+		if (global.graph_size-current->size() <= SEQUENTIAL_THRESHOLD) {
+			branch_and_bound(current);
+			continue;		
+		}
+		
+
+		if (current->leaf()) {
+			current->add(0);
+			if (global.verbose & VER_COUNTERS)
+				global.counter.verified ++;
+
+				// TODO Rendre Atomique :
+			if (current->distance() < global.shortest->distance()) {				
+				if (global.verbose & VER_SHORTER)
+					std::cout << "shorter: " << current << '\n';
+				global.shortest->copy(current);
+				if (global.verbose & VER_COUNTERS)
+					global.counter.found ++;
+			}
+			current->pop();
+		} else {
+			// not yet a leaf
+			if (current->distance() < global.shortest->distance()) {
+				// continue branching
+				for (int i=1; i<current->max(); i++) {
+					if (!current->contains(i)) {
+						Path *new_path;
+						new_path->copy(current);
+						new_path->add(i);
+						global.list.enqueue(new_path);
+					}
+				}
+			} else {
+				// current already >= shortest known so far, bound
+				if (global.verbose & VER_BOUND )
+					std::cout << "bound " << current << '\n';
+				if (global.verbose & VER_COUNTERS)
+					global.counter.bound[current->size()] ++;
+			}
+		}
+	}
+
+	
+
 	pthread_exit(NULL); 
 }
 
@@ -133,18 +191,18 @@ int main(int argc, char* argv[])
 
 //TEST
 
-    listcc<int> list;
+    // listcc<int> list;
 
-    list.enqueue(10);
-    list.enqueue(20);
-    list.enqueue(30);
+    // list.enqueue(10);
+    // list.enqueue(20);
+    // list.enqueue(30);
 
-    std::cout << "Liste après enqueues:" << std::endl;
-    list.printList();
+    // std::cout << "Liste après enqueues:" << std::endl;
+    // list.printList();
 
-    std::cout << "Valeur dequeue: " << list.dequeue() << std::endl;
-    std::cout << "Liste après un dequeue:" << std::endl;
-    list.printList();
+    // std::cout << "Valeur dequeue: " << list.dequeue() << std::endl;
+    // std::cout << "Liste après un dequeue:" << std::endl;
+    // list.printList();
 
 //FIN TEST
 
@@ -171,18 +229,17 @@ int main(int argc, char* argv[])
 		}
 	}
 
-	for (int i = 0; i < NUM_THREADS; i++)
-	{
+	for (int i = 0; i < NUM_THREADS; i++) {
 		int rc = pthread_join(threads[i], NULL);
 	
 		if (rc) {
 			std::cout << "Error:unable to join thread," << rc << std::endl;
          	exit(-1);
 		}
-		
 	}
 
 	Graph* g = TSPFile::graph(fname);
+	global.graph_size = g->size();
 	if (global.verbose & VER_GRAPH)
 		std::cout << COLOR.BLUE << g << COLOR.ORIGINAL;
 
