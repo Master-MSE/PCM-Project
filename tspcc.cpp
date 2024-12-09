@@ -13,7 +13,7 @@
 #define _CRT_SECURE_NO_WARNINGS // evite les erreurs
 
 #define NUM_THREADS 5
-#define SEQUENTIAL_THRESHOLD 8
+#define SEQUENTIAL_THRESHOLD 9
 
 enum Verbosity {
 	VER_NONE = 0,
@@ -90,7 +90,7 @@ static void branch_and_bound(Path* current)
 				global.counter.bound[current->size()] ++;
 			
 			// remove to the total the factorial of the remaining paths not checked by the bound
-			global.total.fetch_sub(global.fact[global.size - current->size()]);
+			global.total.fetch_sub(global.fact[current->size()]);
 			if (global.total < 0)
 			{
 				throw std::runtime_error("Global total went awry");
@@ -140,13 +140,13 @@ void print_counters()
 void *thread_routine(void *thread_id) {
 	while (global.total > 0)
 	{
-		std::cout << global.total << std::endl;
+		// std::cout << global.total << std::endl;
 		Path *current;
 		try {
 			current = global.list.dequeue();
 		}
 		catch(const std::exception& e) {
-			std::cerr << e.what() << '\n';
+			// std::cerr << e.what() << '\n';
 			continue;
 		}
 
@@ -177,7 +177,7 @@ void *thread_routine(void *thread_id) {
 					global.counter.bound[current->size()] ++;
 
 				// remove to the total the factorial of the remaining paths not checked by the bound
-				global.total.fetch_sub(global.fact[global.size - current->size()]);
+				global.total.fetch_sub(global.fact[current->size()]);
 			}
 		}
 	}
