@@ -3,7 +3,7 @@
 CFLAGS=-O3 -Wall
 LDFLAGS=-latomic -lpthread
 
-all: tspcc atomic
+all: tspcc
 
 tspcc: tspcc.o
 	clang++ -o tspcc $(LDFLAGS) $(CFLAGS) tspcc.o

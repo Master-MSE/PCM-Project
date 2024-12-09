@@ -34,6 +34,7 @@ static struct {
 	} counter;
 	int size;
 	int graph_size;
+	Graph *graph;
 	int total;		// number of paths to check
 	int* fact;
 	listcc<Path *> list;
@@ -127,7 +128,6 @@ void print_counters()
 }
 
 void *thread_routine(void *thread_id) {
-
 	while (true)
 	{
 		Path *current;
@@ -135,6 +135,7 @@ void *thread_routine(void *thread_id) {
 			current = global.list.dequeue();
 		}
 		catch(const std::exception& e) {
+			pthread_exit(NULL);
 			std::cerr << e.what() << '\n';
 			continue;
 		}
@@ -143,7 +144,6 @@ void *thread_routine(void *thread_id) {
 			branch_and_bound(current);
 			continue;		
 		}
-		
 
 		if (current->leaf()) {
 			current->add(0);
@@ -165,7 +165,7 @@ void *thread_routine(void *thread_id) {
 				// continue branching
 				for (int i=1; i<current->max(); i++) {
 					if (!current->contains(i)) {
-						Path *new_path;
+						Path *new_path = new Path(global.graph);
 						new_path->copy(current);
 						new_path->add(i);
 						global.list.enqueue(new_path);
@@ -181,44 +181,12 @@ void *thread_routine(void *thread_id) {
 		}
 	}
 
-	
-
+	std::cout << "Thread " << (long)thread_id << " finished" << std::endl;
 	pthread_exit(NULL); 
 }
 
-int main(int argc, char* argv[])
-{
-
-//TEST
-
-    // listcc<int> list;
-
-    // list.enqueue(10);
-    // list.enqueue(20);
-    // list.enqueue(30);
-
-    // std::cout << "Liste après enqueues:" << std::endl;
-    // list.printList();
-
-    // std::cout << "Valeur dequeue: " << list.dequeue() << std::endl;
-    // std::cout << "Liste après un dequeue:" << std::endl;
-    // list.printList();
-
-//FIN TEST
-
-	char* fname = 0;
-	if (argc == 2) {
-		fname = argv[1];
-		global.verbose = VER_NONE;
-	} else {
-		if (argc == 3 && argv[1][0] == '-' && argv[1][1] == 'v') {
-			global.verbose = (Verbosity) (argv[1][2] ? atoi(argv[1]+2) : 1);
-			fname = argv[2];
-		} else {
-			fprintf(stderr, "usage: %s [-v#] filename\n", argv[0]);
-			exit(1);
-		}
-	}
+void start_threads() {
+	std::cout << "Starting " << NUM_THREADS << " threads..." << std::endl;
 
 	pthread_t threads[NUM_THREADS];
 	for (int i = 0; i < NUM_THREADS; i++) {
@@ -237,24 +205,43 @@ int main(int argc, char* argv[])
          	exit(-1);
 		}
 	}
+}
 
-	Graph* g = TSPFile::graph(fname);
-	global.graph_size = g->size();
+int main(int argc, char* argv[])
+{
+	char* fname = 0;
+	if (argc == 2) {
+		fname = argv[1];
+		global.verbose = VER_NONE;
+	} else {
+		if (argc == 3 && argv[1][0] == '-' && argv[1][1] == 'v') {
+			global.verbose = (Verbosity) (argv[1][2] ? atoi(argv[1]+2) : 1);
+			fname = argv[2];
+		} else {
+			fprintf(stderr, "usage: %s [-v#] filename\n", argv[0]);
+			exit(1);
+		}
+	}
+
+	global.graph = TSPFile::graph(fname);
+	global.graph_size = global.graph->size();
 	if (global.verbose & VER_GRAPH)
-		std::cout << COLOR.BLUE << g << COLOR.ORIGINAL;
+		std::cout << COLOR.BLUE << global.graph << COLOR.ORIGINAL;
 
 	if (global.verbose & VER_COUNTERS)
-		reset_counters(g->size());
+		reset_counters(global.graph->size());
 
-	global.shortest = new Path(g);
-	for (int i=0; i<g->size(); i++) {
+	global.shortest = new Path(global.graph);
+	for (int i=0; i<global.graph->size(); i++) {
 		global.shortest->add(i);
 	}
 	global.shortest->add(0);
 
-	Path* current = new Path(g);
+	Path* current = new Path(global.graph);
 	current->add(0);
-	branch_and_bound(current);
+	global.list.enqueue(current);
+
+	start_threads();
 
 	std::cout << COLOR.RED << "shortest " << global.shortest << COLOR.ORIGINAL << '\n';
 
