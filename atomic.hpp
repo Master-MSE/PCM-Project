@@ -1,3 +1,5 @@
+#include <atomic>
+
 template <class T>
 class atomic_stamped {
 private:
