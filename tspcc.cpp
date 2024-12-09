@@ -33,10 +33,9 @@ static struct {
 		int* bound;	// # of bound operations per level
 	} counter;
 	int size;
-	int graph_size;
 	Graph *graph;
-	int total;		// number of paths to check
-	int* fact;
+	std::atomic_uint64_t total;		// number of paths to check
+	u_int64_t* fact;
 	listcc<Path *> list;
 } global;
 
@@ -69,6 +68,9 @@ static void branch_and_bound(Path* current)
 				global.counter.found ++;
 		}
 		current->pop();
+
+		global.total--;
+
 	} else {
 		// not yet a leaf
 		if (current->distance() < global.shortest->distance()) {
@@ -86,6 +88,13 @@ static void branch_and_bound(Path* current)
 				std::cout << "bound " << current << '\n';
 			if (global.verbose & VER_COUNTERS)
 				global.counter.bound[current->size()] ++;
+			
+			// remove to the total the factorial of the remaining paths not checked by the bound
+			global.total.fetch_sub(global.fact[global.size - current->size()]);
+			if (global.total < 0)
+			{
+				throw std::runtime_error("Global total went awry");
+			}
 		}
 	}
 }
@@ -97,7 +106,7 @@ void reset_counters(int size)
 	global.counter.verified = 0;
 	global.counter.found = 0;
 	global.counter.bound = new int[global.size];
-	global.fact = new int[global.size];
+	global.fact = new u_int64_t[global.size];
 	for (int i=0; i<global.size; i++) {
 		global.counter.bound[i] = 0;
 		if (i) {
@@ -105,7 +114,8 @@ void reset_counters(int size)
 			global.fact[pos] = (i-1) ? (i * global.fact[pos+1]) : 1;
 		}
 	}
-	global.total = global.fact[0] = global.fact[1];
+	global.fact[0] = global.fact[1];
+	global.total = global.fact[0];
 }
 
 void print_counters()
@@ -114,12 +124,12 @@ void print_counters()
 	std::cout << "verified: " << global.counter.verified << '\n';
 	std::cout << "found shorter: " << global.counter.found << '\n';
 	std::cout << "bound (per level):";
-	for (int i=0; i<global.size; i++)
+	for (u_int64_t i=0; i<global.size; i++)
 		std::cout << ' ' << global.counter.bound[i];
 	std::cout << "\nbound equivalent (per level): ";
-	int equiv = 0;
-	for (int i=0; i<global.size; i++) {
-		int e = global.fact[i] * global.counter.bound[i];
+	u_int64_t equiv = 0;
+	for (u_int64_t i=0; i<global.size; i++) {
+		u_int64_t e = global.fact[i] * global.counter.bound[i];
 		std::cout << ' ' << e;
 		equiv += e;
 	}
@@ -128,37 +138,25 @@ void print_counters()
 }
 
 void *thread_routine(void *thread_id) {
-	while (true)
+	while (global.total > 0)
 	{
+		std::cout << global.total << std::endl;
 		Path *current;
 		try {
 			current = global.list.dequeue();
 		}
 		catch(const std::exception& e) {
-			pthread_exit(NULL);
 			std::cerr << e.what() << '\n';
 			continue;
 		}
 
-		if (global.graph_size-current->size() <= SEQUENTIAL_THRESHOLD) {
+		if (global.graph->size()-current->size() <= SEQUENTIAL_THRESHOLD) {
 			branch_and_bound(current);
 			continue;		
 		}
 
 		if (current->leaf()) {
-			current->add(0);
-			if (global.verbose & VER_COUNTERS)
-				global.counter.verified ++;
-
-				// TODO Rendre Atomique :
-			if (current->distance() < global.shortest->distance()) {				
-				if (global.verbose & VER_SHORTER)
-					std::cout << "shorter: " << current << '\n';
-				global.shortest->copy(current);
-				if (global.verbose & VER_COUNTERS)
-					global.counter.found ++;
-			}
-			current->pop();
+			throw std::runtime_error("A thread should never hit a leaf !");
 		} else {
 			// not yet a leaf
 			if (current->distance() < global.shortest->distance()) {
@@ -177,10 +175,12 @@ void *thread_routine(void *thread_id) {
 					std::cout << "bound " << current << '\n';
 				if (global.verbose & VER_COUNTERS)
 					global.counter.bound[current->size()] ++;
+
+				// remove to the total the factorial of the remaining paths not checked by the bound
+				global.total.fetch_sub(global.fact[global.size - current->size()]);
 			}
 		}
 	}
-
 	std::cout << "Thread " << (long)thread_id << " finished" << std::endl;
 	pthread_exit(NULL); 
 }
@@ -224,12 +224,11 @@ int main(int argc, char* argv[])
 	}
 
 	global.graph = TSPFile::graph(fname);
-	global.graph_size = global.graph->size();
 	if (global.verbose & VER_GRAPH)
 		std::cout << COLOR.BLUE << global.graph << COLOR.ORIGINAL;
 
-	if (global.verbose & VER_COUNTERS)
-		reset_counters(global.graph->size());
+	// if (global.verbose & VER_COUNTERS)
+	reset_counters(global.graph->size());
 
 	global.shortest = new Path(global.graph);
 	for (int i=0; i<global.graph->size(); i++) {
