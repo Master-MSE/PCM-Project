@@ -1,15 +1,15 @@
 #  Copyright (c) 2012 Marcelo Pasin. All rights reserved.
 
 CFLAGS=-O3 -Wall
-LDFLAGS=-O3 -lm
+LDFLAGS=-O3 
 
 all: tspcc atomic
 
 tspcc: tspcc.o
-	c++ -o tspcc $(LDFLAGS) tspcc.o
+	clang++ -o tspcc $(LDFLAGS) tspcc.o
 
 tspcc.o: tspcc.cpp graph.hpp path.hpp tspfile.hpp
-	c++ $(CFLAGS) -c tspcc.cpp
+	clang++ $(CFLAGS) -c tspcc.cpp
 
 atomic: atomic.cpp
 	clang++ -o atomic -latomic $(LDFLAGS) atomic.cpp

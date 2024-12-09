@@ -9,6 +9,8 @@
 #include "tspfile.hpp"
 #include "listcc.hpp"
 
+#define _CRT_SECURE_NO_WARNINGS // evite les erreurs
+
 
 enum Verbosity {
 	VER_NONE = 0,
@@ -122,12 +124,22 @@ void print_counters()
 int main(int argc, char* argv[])
 {
 
-	listcc<int> list = listcc<int>();
+//TEST
 
-	// list.enqueue(3);
-	// list.printList();
+    listcc<int> list;
 
+    list.enqueue(10);
+    list.enqueue(20);
+    list.enqueue(30);
 
+    std::cout << "Liste après enqueues:" << std::endl;
+    list.printList();
+
+    std::cout << "Valeur dequeue: " << list.dequeue() << std::endl;
+    std::cout << "Liste après un dequeue:" << std::endl;
+    list.printList();
+
+//FIN TEST
 
 	char* fname = 0;
 	if (argc == 2) {

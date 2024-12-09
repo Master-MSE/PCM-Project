@@ -14,98 +14,91 @@
 #include <iostream>
 
 template <typename T>
-class listcc
-{
+class listcc {
 private:
-    template <typename U>
-    struct Node
-	{
-		U value;
-		atomic_stamped<Node<U>*> nextref;
-		Node(U v): nextref(0,0), value(v) {}
-	};
+    struct Node {
+        T value;
+        atomic_stamped<Node> nextref;
+		 Node(T val) : value(val), nextref(nullptr, 0) {}
+    };
 
-    atomic_stamped<Node<T>> headref;
-	atomic_stamped<Node<T>> tailref;
+    atomic_stamped<Node> headref;
+    atomic_stamped<Node> tailref;
+
 public:
+    listcc() : headref(nullptr, 0), tailref(nullptr, 0) {
+        // Initialiser les références atomiques avec un Node fictif
+        Node* dummy = new Node(T()); // Créer un nœud fictif pour initialisation
+        headref.set(dummy, 0);
+        tailref.set(dummy, 0);
+    }
 
-    void printList() {
+    ~listcc() {
         uint64_t stamp;
-        Node<T> *current = headref.get(stamp);
-        
-        int i = 0;
-        while(current) {
-            uint64_t nstamp;
-            Node<T> *next = current->nextref.get(nstamp);
-
-            std::cout << i << " : " << current->value;
+        Node* current = headref.get(stamp);
+        while (current != nullptr) {
+            Node* next = current->nextref.get(stamp);
+            delete current;
             current = next;
         }
     }
 
-    void enqueue(T value)
-	{
-		Node<T> *node = new Node<T>(value);
-		int tailStamp, nextStamp, stamp;
+    void enqueue(T value) {
+        Node* newNode = new Node(value);
 
-		while (true) {
-			Node<T> *tail = tailref.get(tailStamp);
-			Node<T> *next = tail.nextref.get(nextStamp);
-			if (tail == tailref.get(stamp) && stamp == tailStamp) {
-				if (next == NULL) {
-					if (tail.nextref.cas(next, node, nextStamp, nextStamp+1)) {
-						tailref.cas(tail, node, tailStamp, tailStamp+1);
-						return;
-					}
-				} else {
-					tailref.cas(tail, next, tailStamp, tailStamp+1);
-				}
-			}
-		}
-	}
+        uint64_t stamp, nextStamp;
+        while (true) {
+            Node* tail = tailref.get(stamp);
+            Node* next = tail->nextref.get(nextStamp);
 
-    T dequeue()
-	{
-		int tailStamp, headStamp, nextStamp, stamp;
-
-		while (true) {
-			Node<T> *head = headref.get(headStamp);
-			Node<T> *tail = tailref.get(tailStamp);
-			Node<T> *next = head->nextref.get(nextStamp);
-			if (head == headref.get(stamp) && stamp == headStamp) {
-				if (head == tail) {
-					if (next == NULL)
-						return NULL;
-					tailref.cas(tail, next, tailStamp, tailStamp+1);
-				} else {
-					T value = next.value;
-					if (headref.cas(head, next, headStamp, headStamp+1)) {
-						delete head;
-						return value;
+            if (tail == tailref.get(stamp)) {
+                if (next == nullptr) {
+                    if (tail->nextref.cas(next, newNode, nextStamp, nextStamp + 1)) {
+                        tailref.cas(tail, newNode, stamp, stamp + 1);
+                        return;
                     }
-				}
-			}
-		}
-	}
-
-    listcc() {
-        Node<T> *node = new Node<T>(0);
-		headref.set(node, 0);
-        tailref.set(node, 0);
-    };
-    ~listcc() {
-        uint64_t stamp;
-        Node<T> *current = headref.get(stamp);
-        
-        while(current) {
-            uint64_t nstamp;
-            Node<T> *next = current->nextref.get(nstamp);
-
-            delete current;
-            current = next;
+                } else {
+                    tailref.cas(tail, next, stamp, stamp + 1);
+                }
+            }
         }
-        
-    };
+    }
+
+    T dequeue() {
+        uint64_t headStamp, tailStamp, nextStamp;
+        while (true) {
+            Node* head = headref.get(headStamp);
+            Node* tail = tailref.get(tailStamp);
+            Node* next = head->nextref.get(nextStamp);
+
+            if (head == headref.get(headStamp)) {
+                if (head == tail) {
+                    if (next == nullptr) {
+                        throw std::runtime_error("Queue is empty");
+                    }
+                    tailref.cas(tail, next, tailStamp, tailStamp + 1);
+                } else {
+                    T value = next->value;
+                    if (headref.cas(head, next, headStamp, headStamp + 1)) {
+                        delete head;
+                        return value;
+                    }
+                }
+            }
+        }
+    }
+	 // Afficher le contenu de la liste
+    void printList() {
+        uint64_t stamp;
+        listcc::Node* current = headref.get(stamp)->nextref.get(stamp); // Sauter le nœud fictif
+        int index = 0;
+
+        while (current != nullptr) {
+            std::cout << index << " : " << current->value << std::endl;
+            current = current->nextref.get(stamp);
+            index++;
+        }
+    }
 };
 
 #endif

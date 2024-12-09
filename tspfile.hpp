@@ -13,6 +13,11 @@
 
 #include "graph.hpp"
 
+// quand PI n'est par défaut dans c++
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 
 class TSPFile {
 private:
