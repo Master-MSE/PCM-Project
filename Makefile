@@ -1,7 +1,7 @@
 #  Copyright (c) 2012 Marcelo Pasin. All rights reserved.
 
 CFLAGS=-O3 -Wall
-LDFLAGS=-latomic
+LDFLAGS=-latomic -lpthread
 
 all: tspcc atomic
 

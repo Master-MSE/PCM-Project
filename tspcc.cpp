@@ -8,9 +8,11 @@
 #include "path.hpp"
 #include "tspfile.hpp"
 #include "listcc.hpp"
+#include <pthread.h>
 
 #define _CRT_SECURE_NO_WARNINGS // evite les erreurs
 
+#define NUM_THREADS 3
 
 enum Verbosity {
 	VER_NONE = 0,
@@ -121,6 +123,11 @@ void print_counters()
 	std::cout << "check: total " << (global.total==(global.counter.verified + equiv) ? "==" : "!=") << " verified + total bound equivalent\n";
 }
 
+void *thread_routine(void *thread_id) {
+	std::cout << "Hello from thread " << (long)thread_id << std::endl;
+	pthread_exit(NULL); 
+}
+
 int main(int argc, char* argv[])
 {
 
@@ -153,6 +160,26 @@ int main(int argc, char* argv[])
 			fprintf(stderr, "usage: %s [-v#] filename\n", argv[0]);
 			exit(1);
 		}
+	}
+
+	pthread_t threads[NUM_THREADS];
+	for (int i = 0; i < NUM_THREADS; i++) {
+		int rc = pthread_create(&threads[i], NULL, thread_routine, (void *)i);
+		if (rc) {
+			std::cout << "Error:unable to create thread," << rc << std::endl;
+         	exit(-1);
+		}
+	}
+
+	for (int i = 0; i < NUM_THREADS; i++)
+	{
+		int rc = pthread_join(threads[i], NULL);
+	
+		if (rc) {
+			std::cout << "Error:unable to join thread," << rc << std::endl;
+         	exit(-1);
+		}
+		
 	}
 
 	Graph* g = TSPFile::graph(fname);
