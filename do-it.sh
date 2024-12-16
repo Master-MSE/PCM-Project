@@ -8,3 +8,5 @@ hyperfine "./tspcc -f $FILENAME -t 2" \
             "./tspcc -f $FILENAME -t 6" \
             "./tspcc -f $FILENAME -t 8" \
             --export-json ./export.json
+
+python3 ./graphs.py
