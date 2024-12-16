@@ -12,7 +12,7 @@
 
 #define _CRT_SECURE_NO_WARNINGS // evite les erreurs
 
-#define NUM_THREADS 2
+#define NUM_THREADS 8
 #define SEQUENTIAL_THRESHOLD 8
 
 enum Verbosity {
