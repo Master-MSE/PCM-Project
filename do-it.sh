@@ -1,3 +1,10 @@
 make clean
 make tspcc
-hyperfine "./tspcc -v dj8.tsp" "./tspcc -v dj8.tsp" --export-json ./export.json
+
+FILENAME=dj38.tsp
+
+hyperfine "./tspcc -f $FILENAME -t 2" \
+            "./tspcc -f $FILENAME -t 4" \
+            "./tspcc -f $FILENAME -t 6" \
+            "./tspcc -f $FILENAME -t 8" \
+            --export-json ./export.json

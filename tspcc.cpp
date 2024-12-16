@@ -9,10 +9,11 @@
 #include "tspfile.hpp"
 #include "listcc.hpp"
 #include <pthread.h>
+#include <unistd.h>
 
 #define _CRT_SECURE_NO_WARNINGS // evite les erreurs
 
-#define NUM_THREADS 8
+#define DEFAULT_NUM_THREADS 2
 #define SEQUENTIAL_THRESHOLD 8
 
 enum Verbosity {
@@ -224,11 +225,11 @@ void *thread_routine(void *thread_id) {
 	pthread_exit(NULL); 
 }
 
-void start_threads() {
-	std::cout << "Starting " << NUM_THREADS << " threads..." << std::endl;
+void start_threads(int num_threads) {
+	std::cout << "Starting " << num_threads << " threads..." << std::endl;
 
-	pthread_t threads[NUM_THREADS];
-	for (int i = 0; i < NUM_THREADS; i++) {
+	pthread_t threads[num_threads];
+	for (int i = 0; i < num_threads; i++) {
 		int rc = pthread_create(&threads[i], NULL, thread_routine, (void *)i);
 		if (rc) {
 			std::cout << "Error:unable to create thread," << rc << std::endl;
@@ -236,7 +237,7 @@ void start_threads() {
 		}
 	}
 
-	for (int i = 0; i < NUM_THREADS; i++) {
+	for (int i = 0; i < num_threads; i++) {
 		int rc = pthread_join(threads[i], NULL);
 	
 		if (rc) {
@@ -248,19 +249,43 @@ void start_threads() {
 
 int main(int argc, char* argv[])
 {
-	char* fname = 0;
-	if (argc == 2) {
-		fname = argv[1];
-		global.verbose = VER_NONE;
-	} else {
-		if (argc == 3 && argv[1][0] == '-' && argv[1][1] == 'v') {
-			global.verbose = (Verbosity) (argv[1][2] ? atoi(argv[1]+2) : 1);
-			fname = argv[2];
-		} else {
-			fprintf(stderr, "usage: %s [-v#] filename\n", argv[0]);
+	int num_threads = DEFAULT_NUM_THREADS;
+
+	char* fname = NULL;
+	global.verbose = VER_NONE;
+	
+	char c;
+	while ((c = getopt(argc, argv, "v:t:f:")) != -1)
+	{
+		switch (c)
+		{
+		case 'v':
+			global.verbose = (Verbosity) atoi(optarg);
+			break;
+		
+		case 't':
+			num_threads = atoi(optarg);
+			break;
+
+		case 'f':
+			fname = optarg;
+			break;
+			
+		case '?':
+			std::cout << "Got unknown option." << std::endl; 
+			break;
+
+		default:
+			fprintf(stderr, "usage: %s [-v#] [-t#] -f filename", argv[0]);
 			exit(1);
 		}
 	}
+
+	if (fname == NULL) {
+		fprintf(stderr, "usage: %s [-v#] [-t#] -f filename", argv[0]);
+		exit(1);
+	}
+	
 
 	global.graph = TSPFile::graph(fname);
 	if (global.verbose & VER_GRAPH)
@@ -280,7 +305,7 @@ int main(int argc, char* argv[])
 	current->add(0);
 	global.list.enqueue(current);
 
-	start_threads();
+	start_threads(num_threads);
 
 	std::cout << COLOR.RED << "shortest " << global.shortest << COLOR.ORIGINAL << '\n';
 
