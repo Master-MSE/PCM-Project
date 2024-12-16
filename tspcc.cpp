@@ -12,8 +12,8 @@
 
 #define _CRT_SECURE_NO_WARNINGS // evite les erreurs
 
-#define NUM_THREADS 5
-#define SEQUENTIAL_THRESHOLD 9
+#define NUM_THREADS 2
+#define SEQUENTIAL_THRESHOLD 8
 
 enum Verbosity {
 	VER_NONE = 0,
@@ -26,6 +26,7 @@ enum Verbosity {
 
 static struct {
 	Path* shortest;
+	std::atomic_int shortest_cost;
 	Verbosity verbose;
 	struct {
 		int verified;	// # of paths checked
@@ -50,7 +51,7 @@ static const struct {
 };
 
 
-static void branch_and_bound(Path* current)
+static void branch_and_bound(Path* current, Path* shortest_local_to_thread)
 {
 	if (global.verbose & VER_ANALYSE)
 		std::cout << "analysing " << current << '\n';
@@ -60,16 +61,45 @@ static void branch_and_bound(Path* current)
 		current->add(0);
 		if (global.verbose & VER_COUNTERS)
 			global.counter.verified ++;
-		if (current->distance() < global.shortest->distance()) {
-			if (global.verbose & VER_SHORTER)
-				std::cout << "shorter: " << current << '\n';
-			global.shortest->copy(current);
-			if (global.verbose & VER_COUNTERS)
-				global.counter.found ++;
+
+		global.total--; // decrement the total of paths checked by one
+
+		// Check for thread-locally distance first
+		if (shortest_local_to_thread->distance() <= current->distance()) {
+			current->pop();
+			return;
 		}
+
+		int current_shortest = global.shortest_cost.load();	
+		while (current_shortest > current->distance() && 
+				!global.shortest_cost.compare_exchange_weak(current_shortest, current->distance())){
+			// Compare and set with retry for the shortest
+		}
+
+		if (global.verbose & VER_SHORTER)
+			std::cout << "local shorter: " << current << '\n';
+
+		shortest_local_to_thread->copy(current);
+		
+		if (global.verbose & VER_COUNTERS)
+			global.counter.found ++;
+
 		current->pop();
 
-		global.total--;
+		// // this is a leaf
+		// current->add(0);
+		// if (global.verbose & VER_COUNTERS)
+		// 	global.counter.verified ++;
+		// if (current->distance() < global.shortest->distance()) {
+		// 	if (global.verbose & VER_SHORTER)
+		// 		std::cout << "shorter: " << current << '\n';
+		// 	global.shortest->copy(current);
+		// 	if (global.verbose & VER_COUNTERS)
+		// 		global.counter.found ++;
+		// }
+		// current->pop();
+
+		// global.total--;
 
 	} else {
 		// not yet a leaf
@@ -78,7 +108,7 @@ static void branch_and_bound(Path* current)
 			for (int i=1; i<current->max(); i++) {
 				if (!current->contains(i)) {
 					current->add(i);
-					branch_and_bound(current);
+					branch_and_bound(current, shortest_local_to_thread);
 					current->pop();
 				}
 			}
@@ -91,10 +121,6 @@ static void branch_and_bound(Path* current)
 			
 			// remove to the total the factorial of the remaining paths not checked by the bound
 			global.total.fetch_sub(global.fact[current->size()]);
-			if (global.total < 0)
-			{
-				throw std::runtime_error("Global total went awry");
-			}
 		}
 	}
 }
@@ -138,6 +164,8 @@ void print_counters()
 }
 
 void *thread_routine(void *thread_id) {
+	Path *local_shortest = new Path(global.graph);
+
 	while (global.total > 0)
 	{
 		// std::cout << global.total << std::endl;
@@ -146,12 +174,13 @@ void *thread_routine(void *thread_id) {
 			current = global.list.dequeue();
 		}
 		catch(const std::exception& e) {
-			// std::cerr << e.what() << '\n';
+			// arbitrary sleep ?
+			std::cerr << e.what() << '\n';
 			continue;
 		}
 
 		if (global.graph->size()-current->size() <= SEQUENTIAL_THRESHOLD) {
-			branch_and_bound(current);
+			branch_and_bound(current, local_shortest);
 			continue;		
 		}
 
@@ -163,8 +192,10 @@ void *thread_routine(void *thread_id) {
 				// continue branching
 				for (int i=1; i<current->max(); i++) {
 					if (!current->contains(i)) {
+						// Unique global malloc ?
 						Path *new_path = new Path(global.graph);
 						new_path->copy(current);
+
 						new_path->add(i);
 						global.list.enqueue(new_path);
 					}
@@ -181,6 +212,13 @@ void *thread_routine(void *thread_id) {
 			}
 		}
 	}
+
+	if (global.shortest_cost == local_shortest->distance()) {
+		std::cout << "Shortest path found by thread " << (long)thread_id << std::endl;
+		global.shortest->copy(local_shortest);
+	}
+	
+
 	std::cout << "Thread " << (long)thread_id << " finished" << std::endl;
 	pthread_exit(NULL); 
 }
@@ -235,6 +273,7 @@ int main(int argc, char* argv[])
 		global.shortest->add(i);
 	}
 	global.shortest->add(0);
+	global.shortest_cost = global.shortest->distance();
 
 	Path* current = new Path(global.graph);
 	current->add(0);
