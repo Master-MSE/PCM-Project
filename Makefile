@@ -9,7 +9,7 @@ tspcc: tspcc.o
 	clang++ -o tspcc $(LDFLAGS) $(CFLAGS) tspcc.o
 
 tspcc.o: tspcc.cpp graph.hpp path.hpp tspfile.hpp listcc.hpp atomic.hpp
-	clang++ $(LDFLAGS) $(CFLAGS) -c tspcc.cpp
+	clang++ $(CFLAGS) -c tspcc.cpp
 	
 omp:
 	make tspcc CFLAGS="-fopenmp -O3" LDFLAGS="-fopenmp -O3"

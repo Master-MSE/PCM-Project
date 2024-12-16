@@ -211,6 +211,7 @@ void *thread_routine(void *thread_id) {
 				global.total.fetch_sub(global.fact[current->size()]);
 			}
 		}
+		delete current;
 	}
 
 	if (global.shortest_cost == local_shortest->distance()) {
