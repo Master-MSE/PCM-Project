@@ -71,11 +71,14 @@ static void branch_and_bound(Path* current, Path* shortest_local_to_thread)
 			return;
 		}
 
-		int current_shortest = global.shortest_cost.load();	
+		/*
+				int current_shortest = global.shortest_cost.load();	
 		while (current_shortest > current->distance() && 
 				!global.shortest_cost.compare_exchange_weak(current_shortest, current->distance())){
 			// Compare and set with retry for the shortest
 		}
+		*/
+
 
 		if (global.verbose & VER_SHORTER)
 			std::cout << "local shorter: " << current << '\n';
@@ -203,7 +206,18 @@ void *thread_routine(void *thread_id) {
 		delete current;
 	}
 
+<<<<<<< HEAD
 	if (global.shortest_cost.load() == local_shortest->distance()) {
+=======
+	
+
+	if (global.shortest_cost < local_shortest->distance()) {
+			int current_shortest = global.shortest_cost.load();	
+		while (current_shortest > local_shortest->distance() && 
+				!global.shortest_cost.compare_exchange_weak(current_shortest, local_shortest->distance())){
+			// Compare and set with retry for the shortest
+		}
+>>>>>>> 0de0104 (test)
 		std::cout << "Shortest path found by thread " << (long)thread_id << std::endl;
 		global.shortest->copy(local_shortest);
 	}
