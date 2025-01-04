@@ -54,8 +54,10 @@ static const struct {
 
 static void branch_and_bound(Path* current, Path* shortest_local_to_thread)
 {
-	if (global.verbose & VER_ANALYSE)
-		//std::cout << "analysing " << current << '\n';
+	if (global.verbose & VER_ANALYSE){
+		//std::cout << "analysing " << cu<rrent << '\n';
+	}
+		
 
 	if (current->leaf()) {
 		// this is a leaf
@@ -230,7 +232,7 @@ void *thread_routine(void *thread_id) {
 					if(continue_branching) {
 						current->copy(new_current);
 					} 
-					delete new_current;
+					//delete new_current;
 				} else {
 					// current already >= shortest known so far, bound
 					if (global.verbose & VER_BOUND )
