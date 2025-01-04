@@ -55,7 +55,7 @@ static const struct {
 static void branch_and_bound(Path* current, Path* shortest_local_to_thread)
 {
 	if (global.verbose & VER_ANALYSE)
-		std::cout << "analysing " << current << '\n';
+		//std::cout << "analysing " << current << '\n';
 
 	if (current->leaf()) {
 		// this is a leaf
@@ -206,10 +206,10 @@ void *thread_routine(void *thread_id) {
 							if(!continue_branching) {
 								continue_branching = true;
 								new_current->copy(new_path);
-								std::cout << "new Current for thread " << new_path << '\n';
+								//std::cout << "new Current for thread " << new_path << '\n';
 
 							} else {
-							std::cout << "Adding new path to queue: " << new_path << '\n';
+							//std::cout << "Adding new path to queue: " << new_path << '\n';
 							global.list.enqueue(new_path);
 							}
 							
@@ -222,7 +222,7 @@ void *thread_routine(void *thread_id) {
 				} else {
 					// current already >= shortest known so far, bound
 					if (global.verbose & VER_BOUND )
-						std::cout << "bound " << current << '\n';
+						//std::cout << "bound " << current << '\n';
 					if (global.verbose & VER_COUNTERS)
 						global.counter.bound[current->size()] ++;
 
@@ -344,7 +344,7 @@ int main(int argc, char* argv[])
 	std::cout << COLOR.RED << "shortest " << global.shortest << COLOR.ORIGINAL << '\n';
 
 	if (global.verbose & VER_COUNTERS)
-		print_counters();
+		//print_counters();
 
 	return 0;
 }
