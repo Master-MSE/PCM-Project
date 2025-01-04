@@ -171,37 +171,67 @@ void *thread_routine(void *thread_id) {
 			continue;
 		}
 
-		if (global.graph->size()-current->size() <= SEQUENTIAL_THRESHOLD) {
+
+
+		//while current
+		bool continue_branching = true;
+		
+		while(continue_branching){
+			continue_branching = false;
+
+			if (global.graph->size()-current->size() <= SEQUENTIAL_THRESHOLD) {
 			branch_and_bound(current, local_shortest);
-			continue;		
-		}
-
-		if (current->leaf()) {
-			throw std::runtime_error("A thread should never hit a leaf !");
-		} else {
-			// not yet a leaf
-			if (current->distance() < global.shortest->distance()) {
-				// continue branching
-				for (int i=1; i<current->max(); i++) {
-					if (!current->contains(i)) {
-						// Unique global malloc ?
-						Path *new_path = new Path(global.graph);
-						new_path->copy(current);
-
-						new_path->add(i);
-						global.list.enqueue(new_path);
-					}
-				}
-			} else {
-				// current already >= shortest known so far, bound
-				if (global.verbose & VER_BOUND )
-					std::cout << "bound " << current << '\n';
-				if (global.verbose & VER_COUNTERS)
-					global.counter.bound[current->size()] ++;
-
-				// remove to the total the factorial of the remaining paths not checked by the bound
-				global.total.fetch_sub(global.fact[current->size()]);
+			break;	
 			}
+
+
+			if (current->leaf()) {
+				throw std::runtime_error("A thread should never hit a leaf !");
+			} else {
+				// not yet a leaf
+				if (current->distance() < global.shortest->distance()) {
+					// continue branching
+
+					Path *new_current = new Path(global.graph);
+					for (int i=1; i<current->max(); i++) {
+						// if 1 put I in current
+						// else create job
+						if (!current->contains(i)) {
+							// Unique global malloc ?
+							Path *new_path = new Path(global.graph);
+							new_path->copy(current);
+							new_path->add(i);
+						
+							//if !newCurrent
+							if(!continue_branching) {
+								continue_branching = true;
+								new_current->copy(new_path);
+								std::cout << "new Current for thread " << new_path << '\n';
+
+							} else {
+							std::cout << "Adding new path to queue: " << new_path << '\n';
+							global.list.enqueue(new_path);
+							}
+							
+						}
+					}
+					if(continue_branching) {
+						current->copy(new_current);
+					} 
+					delete new_current;
+				} else {
+					// current already >= shortest known so far, bound
+					if (global.verbose & VER_BOUND )
+						std::cout << "bound " << current << '\n';
+					if (global.verbose & VER_COUNTERS)
+						global.counter.bound[current->size()] ++;
+
+					// remove to the total the factorial of the remaining paths not checked by the bound
+					global.total.fetch_sub(global.fact[current->size()]);
+				}
+				
+			}
+		//end while
 		}
 		delete current;
 	}
