@@ -12,11 +12,15 @@
 #include <unistd.h>
 #include <memory>
 #include <vector>
+#include <cstdlib>
+#include <ctime>
 
 #define _CRT_SECURE_NO_WARNINGS
 
 #define DEFAULT_NUM_THREADS 2
 #define SEQUENTIAL_THRESHOLD 8
+#define INITIAL_PATHS_PER_THREAD 4
+#define SPIN_YIELD_COUNT 1000
 
 enum Verbosity {
     VER_NONE = 0,
@@ -41,6 +45,7 @@ static struct {
     std::atomic_uint64_t total;
     std::unique_ptr<u_int64_t[]> fact;
     listcc<Path*> list;
+	std::atomic_bool initialization_done{false}; // Pour marquer la fin de l'initialisation
 } global;
 
 static const struct {
@@ -149,70 +154,116 @@ void cleanup() {
     delete global.graph;
 }
 
-void *thread_routine(void *thread_id) {
-    Path *local_shortest = new Path(global.graph);
-    local_shortest->copy(global.shortest);
-    Path *current;
-    
-    while (global.total > 0) {
-        try {
-            current = global.list.dequeue();
+void distribute_initial_work(std::vector<std::vector<Path*>>& thread_queues, int num_threads) {
+    // Créer les chemins initiaux directement pour chaque thread
+    for (int t = 0; t < num_threads; t++) {
+        for (int p = 0; p < INITIAL_PATHS_PER_THREAD; p++) {
+            Path* current = new Path(global.graph);
+            current->add(0);
+            
+            // Ajouter quelques nœuds aléatoires pour diversifier
+            int depth = rand() % (global.graph->size() / 2);
+            for (int d = 0; d < depth; d++) {
+                std::vector<int> available;
+                for (int i = 1; i < current->max(); i++) {
+                    if (!current->contains(i)) {
+                        available.push_back(i);
+                    }
+                }
+                if (available.empty()) break;
+                int idx = rand() % available.size();
+                current->add(available[idx]);
+            }
+            
+            thread_queues[t].push_back(current);
         }
-        catch(const std::exception& e) {
+    }
+}
+
+void spin_yield() {
+    for(int i = 0; i < SPIN_YIELD_COUNT; i++) {
+        __asm__ __volatile__("" : : : "memory");
+    }
+}
+
+void* thread_routine(void* arg) {
+    int thread_id = (long)arg;
+    std::vector<Path*> local_queue;
+    Path* local_shortest = new Path(global.graph);
+    local_shortest->copy(global.shortest);
+    Path* current = nullptr;
+
+    while (!global.initialization_done.load()) {
+        spin_yield();
+    }
+
+    while (global.total > 0) {
+        if (!local_queue.empty()) {
+            current = local_queue.back();
+            local_queue.pop_back();
+        } else {
+            try {
+                current = global.list.dequeue();
+                if (!current) {
+                    spin_yield();
+                    continue;
+                }
+            } catch (const std::exception&) {
+                spin_yield();
+                continue;
+            }
+        }
+
+        if (global.graph->size() - current->size() <= SEQUENTIAL_THRESHOLD) {
+            branch_and_bound(current, local_shortest);
+            delete current;
             continue;
         }
 
-        if (!current) continue;
-
-        if (global.graph->size()-current->size() <= SEQUENTIAL_THRESHOLD) {
-            branch_and_bound(current, local_shortest);
-            delete current;
-            continue;        
-        }
-
-        if (current->leaf()) {
-            delete current;
-            throw std::runtime_error("A thread should never hit a leaf !");
-        } else {
-            if (current->distance() < global.shortest->distance()) {
-                for (int i=1; i<current->max(); i++) {
-                    if (!current->contains(i)) {
-                        Path* new_path = new Path(global.graph);
-                        new_path->copy(current);
-                        new_path->add(i);
-                        global.list.enqueue(new_path);
-                    }
-                }
-            } else {
-                if (global.verbose & VER_BOUND)
-                    std::cout << "bound " << current << '\n';
-                if (global.verbose & VER_COUNTERS)
-                    global.counter.bound[current->size()]++;
-
-                global.total.fetch_sub(global.fact[current->size()]);
+        std::vector<Path*> new_paths;
+        for (int i = 1; i < current->max(); i++) {
+            if (!current->contains(i)) {
+                Path* new_path = new Path(global.graph);
+                new_path->copy(current);
+                new_path->add(i);
+                new_paths.push_back(new_path);
             }
-            delete current;
+        }
+        delete current;
+
+        for (size_t i = 0; i < new_paths.size(); i++) {
+            if (i % 2 == 0 || local_queue.size() > 10) {
+                global.list.enqueue(new_paths[i]);
+            } else {
+                local_queue.push_back(new_paths[i]);
+            }
         }
     }
 
+    for (Path* p : local_queue) {
+        delete p;
+    }
+
     if (global.shortest_cost.load() == local_shortest->distance()) {
-        std::cout << "Shortest path found by thread " << (long)thread_id << std::endl;
         global.shortest->copy(local_shortest);
     }
 
     delete local_shortest;
-    std::cout << "Thread " << (long)thread_id << " finished" << std::endl;
-    pthread_exit(NULL); 
+    return nullptr;
 }
 
 void start_threads(int num_threads) {
     std::cout << "Starting " << num_threads << " threads..." << std::endl;
 
-    // Use raw array instead of vector for pthread_t
+    std::vector<std::vector<Path*>> initial_queues(num_threads);
+    distribute_initial_work(initial_queues, num_threads);
+
     pthread_t* threads = new pthread_t[num_threads];
     
+    global.initialization_done.store(true);
+    
     for (int i = 0; i < num_threads; i++) {
-        int rc = pthread_create(&threads[i], NULL, thread_routine, (void *)static_cast<intptr_t>(i));
+        int rc = pthread_create(&threads[i], NULL, thread_routine, (void*)(long)i);
         if (rc) {
             std::cout << "Error:unable to create thread," << rc << std::endl;
             delete[] threads;
