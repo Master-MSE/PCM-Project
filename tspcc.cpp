@@ -79,7 +79,6 @@ static void branch_and_bound(Path* current, Path* shortest_local_to_thread)
 
 		if (global.verbose & VER_SHORTER)
 			std::cout << "local shorter: " << current << '\n';
-
 		shortest_local_to_thread->copy(current);
 		
 		if (global.verbose & VER_COUNTERS)
@@ -166,17 +165,18 @@ void print_counters()
 
 void *thread_routine(void *thread_id) {
 	Path *local_shortest = new Path(global.graph);
-
+	local_shortest->copy(global.shortest);
+	Path *current;
+	
 	while (global.total > 0)
 	{
-		// std::cout << global.total << std::endl;
-		Path *current;
 		try {
 			current = global.list.dequeue();
+			// std::cout << global.total << std::endl;
 		}
 		catch(const std::exception& e) {
 			// arbitrary sleep ?
-			std::cerr << e.what() << '\n';
+			// std::cerr << e.what() << '\n';
 			continue;
 		}
 
@@ -215,11 +215,13 @@ void *thread_routine(void *thread_id) {
 		delete current;
 	}
 
-	if (global.shortest_cost == local_shortest->distance()) {
+	if (global.shortest_cost.load() == local_shortest->distance()) {
 		std::cout << "Shortest path found by thread " << (long)thread_id << std::endl;
 		global.shortest->copy(local_shortest);
 	}
 	
+	delete local_shortest;
+
 
 	std::cout << "Thread " << (long)thread_id << " finished" << std::endl;
 	pthread_exit(NULL); 
