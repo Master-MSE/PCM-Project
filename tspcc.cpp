@@ -10,11 +10,15 @@
 #include "listcc.hpp"
 #include <pthread.h>
 #include <unistd.h>
+#include <vector>
+#include <random>
 
-#define _CRT_SECURE_NO_WARNINGS // evite les erreurs
+#define _CRT_SECURE_NO_WARNINGS
 
 #define DEFAULT_NUM_THREADS 2
-#define MIN_WORK_SIZE 8
+#define SEQUENTIAL_THRESHOLD 32
+#define LOCAL_WORK_STEAL_ATTEMPTS 3
+#define WORK_STEAL_BATCH_SIZE 4
 
 enum Verbosity {
     VER_NONE = 0,
@@ -25,523 +29,335 @@ enum Verbosity {
     VER_COUNTERS = 16,
 };
 
+struct ThreadContext {
+    Path* shortest_local;
+    int shortest_cost_local;
+    std::vector<Path*> local_queue;
+    int thread_id;
+    std::mt19937 rng;  // Générateur de nombres aléatoires local au thread
+};
+
+static struct {
+    Path* shortest;
+    std::atomic_int shortest_cost;
+    Verbosity verbose;
+    struct {
+        std::atomic_int verified;
+        std::atomic_int found;
+        std::atomic_int* bound;
+    } counter;
+    int size;
+    Graph *graph;
+    std::atomic_uint64_t total;
+    u_int64_t* fact;
+    listcc<Path *> list;
+    std::vector<ThreadContext*> thread_contexts;
+} global;
+
 static const struct {
     char RED[6];
     char BLUE[6];
     char ORIGINAL[6];
 } COLOR = {
-        .RED = { 27, '[', '3', '1', 'm', 0 },
-        .BLUE = { 27, '[', '3', '6', 'm', 0 },
-        .ORIGINAL = { 27, '[', '3', '9', 'm', 0 },
+    .RED = { 27, '[', '3', '1', 'm', 0 },
+    .BLUE = { 27, '[', '3', '6', 'm', 0 },
+    .ORIGINAL = { 27, '[', '3', '9', 'm', 0 },
 };
 
-struct ThreadData {
-    Path* local_shortest;
-    int thread_id;
-};
+bool steal_work(ThreadContext* context) {
+    for (int attempts = 0; attempts < LOCAL_WORK_STEAL_ATTEMPTS; attempts++) {
+        int victim = context->rng() % global.thread_contexts.size();
+        if (victim == context->thread_id) continue;
+        
+        auto& victim_queue = global.thread_contexts[victim]->local_queue;
+        
+        // Essayer de voler plusieurs tâches d'un coup
+        int steal_count = 0;
+        for (int i = 0; i < WORK_STEAL_BATCH_SIZE && !victim_queue.empty(); ++i) {
+            context->local_queue.push_back(victim_queue.back());
+            victim_queue.pop_back();
+            steal_count++;
+        }
+        
+        if (steal_count > 0) return true;
+    }
+    return false;
+}
 
-static struct {
-    Path* shortest;
-    std::atomic<int> shortest_cost;
-    Graph* graph;
-    listcc<Path*> work_queue;
-    Verbosity verbose;
-    struct {
-        std::atomic<int> verified;
-        std::atomic<int> found;
-        std::atomic<int>* bound;
-    } counter;
-} global;
-
-static void branch_and_bound(Path* current, Path* shortest_local) {
-    if (global.verbose & VER_ANALYSE)
-        std::cout << "analysing " << current << '\n';
-
-    if (current->leaf()) {
-<<<<<<< HEAD
-<<<<<<< HEAD
-        current->add(0);
-
-<<<<<<< HEAD
-static void branch_and_bound(Path* current, Path* shortest_local_to_thread)
+static void branch_and_bound(Path* current, ThreadContext* context)
 {
-	if (global.verbose & VER_ANALYSE){
-		//std::cout << "analysing " << cu<rrent << '\n';
-	}
-		
-=======
-        if (global.verbose & VER_COUNTERS)
-            global.counter.verified++;
->>>>>>> 9f3b8f6 (improvement)
-=======
-        current->add(0);  // Retour au point de départ
-        global.counter.verified++;  // Incrémentation du compteur de vérifications
->>>>>>> 3eb16bc (comments)
-=======
-		//this is a leaf
+    if (current->leaf()) {
         current->add(0);
-
         if (global.verbose & VER_COUNTERS)
             global.counter.verified++;
->>>>>>> 4bd408c (restore)
 
-        if (shortest_local->distance() > current->distance()) {
-            int current_shortest = global.shortest_cost.load();
-            while (current_shortest > current->distance() &&
-                   !global.shortest_cost.compare_exchange_weak(current_shortest, current->distance())) {}
+        global.total--;
 
-            if (global.verbose & VER_SHORTER)
-                std::cout << "shorter: " << current << '\n';
-
-<<<<<<< HEAD
-<<<<<<< HEAD
-            shortest_local->copy(current);
-
-<<<<<<< HEAD
-		/*
-				int current_shortest = global.shortest_cost.load();	
-		while (current_shortest > current->distance() && 
-				!global.shortest_cost.compare_exchange_weak(current_shortest, current->distance())){
-			// Compare and set with retry for the shortest
-		}
-		*/
-
-
-		if (global.verbose & VER_SHORTER)
-			std::cout << "local shorter: " << current << '\n';
-		shortest_local_to_thread->copy(current);
-		
-		if (global.verbose & VER_COUNTERS)
-			global.counter.found ++;
-
-		current->pop();
-		
-		return;
-	} 
-
-
-	if (current->distance() < global.shortest_cost.load()) {
-		// continue branching
-		for (int i=1; i<current->max(); i++) {
-			if (!current->contains(i)) {
-				current->add(i);
-				branch_and_bound(current, shortest_local_to_thread);
-				current->pop();
-			}
-		}
-		return;
-	}
-
-	// current already >= shortest known so far, bound
-	if (global.verbose & VER_BOUND )
-		std::cout << "bound " << current << '\n';
-	if (global.verbose & VER_COUNTERS)
-		global.counter.bound[current->size()] ++;
-	
-	// remove to the total the factorial of the remaining paths not checked by the bound
-	global.total.fetch_sub(global.fact[current->size()]);
-	
-=======
-            if (global.verbose & VER_COUNTERS)
-                global.counter.found++;
-=======
-            shortest_local->copy(current);  // Copie du nouveau chemin le plus court
-            global.counter.found++;  // Incrémentation du compteur de chemins trouvés
->>>>>>> 3eb16bc (comments)
+        // Vérification locale d'abord
+        if (context->shortest_cost_local > current->distance()) {
+            context->shortest_cost_local = current->distance();
+            context->shortest_local->copy(current);
+            
+            // Mise à jour globale uniquement si nécessaire
+            int global_shortest = global.shortest_cost.load(std::memory_order_relaxed);
+            if (context->shortest_cost_local < global_shortest) {
+                while (global_shortest > context->shortest_cost_local && 
+                    !global.shortest_cost.compare_exchange_weak(global_shortest, 
+                        context->shortest_cost_local, 
+                        std::memory_order_release,
+                        std::memory_order_relaxed)) {
+                }
+                
+                if (global.verbose & VER_SHORTER)
+                    std::cout << "Thread " << context->thread_id << " found shorter: " << current << '\n';
+                
+                if (global.verbose & VER_COUNTERS)
+                    global.counter.found++;
+            }
         }
-=======
-            shortest_local->copy(current);
->>>>>>> 4bd408c (restore)
 
-            if (global.verbose & VER_COUNTERS)
-                global.counter.found++;
-        }
         current->pop();
         return;
     }
 
-    if (current->distance() >= global.shortest_cost.load()) {
-        if (global.verbose & VER_BOUND)
-            std::cout << "bound " << current << '\n';
-        if (global.verbose & VER_COUNTERS)
-            global.counter.bound[current->size()]++;
-        return;
-    }
-
-    if (global.graph->size() - current->size() <= MIN_WORK_SIZE) {
-        for (int i = 1; i < current->max(); i++) {
+    // Vérification par rapport au minimum local
+    if (current->distance() < context->shortest_cost_local) {
+        for (int i = current->max() - 1; i >= 1; i--) {
             if (!current->contains(i)) {
                 current->add(i);
-                branch_and_bound(current, shortest_local);
+                branch_and_bound(current, context);
                 current->pop();
             }
         }
         return;
     }
 
-    for (int i = 1; i < current->max(); i++) {
-        if (!current->contains(i)) {
-            Path* new_path = new Path(global.graph);
-            new_path->copy(current);
-            new_path->add(i);
-            global.work_queue.enqueue(new_path);
-        }
-    }
->>>>>>> 9f3b8f6 (improvement)
+    // Bound case
+    if (global.verbose & VER_BOUND)
+        std::cout << "bound " << current << '\n';
+    if (global.verbose & VER_COUNTERS)
+        global.counter.bound[current->size()]++;
+    
+    global.total.fetch_sub(global.fact[current->size()], std::memory_order_relaxed);
 }
 
-static void* thread_worker(void* arg) {
-    ThreadData* data = (ThreadData*)arg;
-    Path* current = new Path(global.graph);
-
-    while (true) {
-        try {
-            Path* work = global.work_queue.dequeue();
-            current->copy(work);
-            delete work;
-            branch_and_bound(current, data->local_shortest);
-        } catch (const std::runtime_error&) {
-            break;
+void *thread_routine(void *arg) {
+    ThreadContext* context = (ThreadContext*)arg;
+    context->rng.seed(context->thread_id + time(nullptr));  // Initialisation du RNG
+    
+    while (global.total > 0) {
+        Path* current = nullptr;
+        
+        // Essayer d'abord la queue locale
+        if (!context->local_queue.empty()) {
+            current = context->local_queue.back();
+            context->local_queue.pop_back();
+        } 
+        // Ensuite essayer de voler du travail
+        else if (!steal_work(context)) {
+            // En dernier recours, utiliser la queue globale
+            try {
+                current = global.list.dequeue();
+            } catch(const std::exception&) {
+                if (global.total > 0) {
+                    usleep(100);  // Court délai avant nouvelle tentative
+                }
+                continue;
+            }
         }
+
+        if (!current) continue;
+
+        // Mise à jour périodique du shortest_cost_local
+        if ((global.total.load(std::memory_order_relaxed) % 1000) == 0) {
+            context->shortest_cost_local = std::min(
+                context->shortest_cost_local,
+                global.shortest_cost.load(std::memory_order_relaxed)
+            );
+        }
+
+        if (global.graph->size() - current->size() <= SEQUENTIAL_THRESHOLD) {
+            branch_and_bound(current, context);
+            delete current;
+            continue;
+        }
+
+        // Distribution du travail dans la queue locale
+        if (current->distance() < context->shortest_cost_local) {
+            for (int i = 1; i < current->max(); i++) {
+                if (!current->contains(i)) {
+                    Path *new_path = new Path(global.graph);
+                    new_path->copy(current);
+                    new_path->add(i);
+                    context->local_queue.push_back(new_path);
+                }
+            }
+        } else {
+            // Bound case
+            if (global.verbose & VER_BOUND)
+                std::cout << "bound " << current << '\n';
+            if (global.verbose & VER_COUNTERS)
+                global.counter.bound[current->size()]++;
+            
+            global.total.fetch_sub(global.fact[current->size()], std::memory_order_relaxed);
+        }
+        
+        delete current;
     }
 
-    if (data->local_shortest->distance() == global.shortest_cost.load()) {
-        std::cout << "Shortest path found by thread " << data->thread_id << std::endl;
-        global.shortest->copy(data->local_shortest);
+    // Mise à jour finale du chemin le plus court si nécessaire
+    if (context->shortest_cost_local == global.shortest_cost.load(std::memory_order_relaxed)) {
+        global.shortest->copy(context->shortest_local);
     }
 
-    delete current;
-    delete data->local_shortest;
-    delete data;
-    return nullptr;
+    std::cout << "Thread " << context->thread_id << " finished" << std::endl;
+    pthread_exit(NULL);
 }
 
-static void parallel_solve(int num_threads) {
+void reset_counters(int size)
+{
+    global.size = size;
+    global.counter.verified = 0;
+    global.counter.found = 0;
+    global.counter.bound = new std::atomic_int[size]();
+    global.fact = new u_int64_t[size];
+    
+    for (int i = 0; i < size; i++) {
+        global.counter.bound[i] = 0;
+        if (i) {
+            int pos = size - i;
+            global.fact[pos] = (i-1) ? (i * global.fact[pos+1]) : 1;
+        }
+    }
+    global.fact[0] = global.fact[1];
+    global.total = global.fact[0];
+}
+
+void print_counters()
+{
+    std::cout << "total: " << global.total << '\n';
+    std::cout << "verified: " << global.counter.verified << '\n';
+    std::cout << "found shorter: " << global.counter.found << '\n';
+    std::cout << "bound (per level):";
+    for (int i = 0; i < global.size; i++)
+        std::cout << ' ' << global.counter.bound[i].load();
+    std::cout << "\nbound equivalent (per level): ";
+    u_int64_t equiv = 0;
+    for (int i = 0; i < global.size; i++) {
+        u_int64_t e = global.fact[i] * global.counter.bound[i].load();
+        std::cout << ' ' << e;
+        equiv += e;
+    }
+    std::cout << "\nbound equivalent (total): " << equiv << '\n';
+    std::cout << "check: total " << (global.total == (global.counter.verified + equiv) ? "==" : "!=")
+              << " verified + total bound equivalent\n";
+}
+
+void start_threads(int num_threads) {
     std::cout << "Starting " << num_threads << " threads..." << std::endl;
 
-    Path* root = new Path(global.graph);
-    root->add(0);
-
-    for (int i = 1; i < global.graph->size(); i++) {
-        Path* new_path = new Path(global.graph);
-        new_path->copy(root);
-        new_path->add(i);
-        global.work_queue.enqueue(new_path);
+    // Initialisation des contextes de thread
+    global.thread_contexts.reserve(num_threads);
+    for (int i = 0; i < num_threads; i++) {
+        ThreadContext* context = new ThreadContext();
+        context->shortest_local = new Path(global.graph);
+        context->shortest_local->copy(global.shortest);
+        context->shortest_cost_local = global.shortest_cost.load();
+        context->thread_id = i;
+        global.thread_contexts.push_back(context);
     }
-    delete root;
 
     pthread_t threads[num_threads];
     for (int i = 0; i < num_threads; i++) {
-        ThreadData* data = new ThreadData;
-        data->thread_id = i;
-        data->local_shortest = new Path(global.graph);
-        data->local_shortest->copy(global.shortest);
-
-        int rc = pthread_create(&threads[i], nullptr, thread_worker, data);
+        int rc = pthread_create(&threads[i], NULL, thread_routine, (void *)global.thread_contexts[i]);
         if (rc) {
-            std::cout << "Error: unable to create thread " << rc << std::endl;
+            std::cout << "Error:unable to create thread," << rc << std::endl;
             exit(-1);
         }
     }
 
     for (int i = 0; i < num_threads; i++) {
-        pthread_join(threads[i], nullptr);
+        int rc = pthread_join(threads[i], NULL);
+        if (rc) {
+            std::cout << "Error:unable to join thread," << rc << std::endl;
+            exit(-1);
+        }
+    }
+
+    // Nettoyage
+    for (auto context : global.thread_contexts) {
+        delete context->shortest_local;
+        delete context;
     }
 }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-void *thread_routine(void *thread_id) {
-	Path *local_shortest = new Path(global.graph);
-	local_shortest->copy(global.shortest);
-	Path *current;
-	
-	while (global.total > 0)
-	{
-		try {
-			current = global.list.dequeue();
-			// std::cout << global.total << std::endl;
-		}
-		catch(const std::exception& e) {
-			// arbitrary sleep ?
-			// std::cerr << e.what() << '\n';
-			continue;
-		}
+int main(int argc, char* argv[])
+{
+    int num_threads = DEFAULT_NUM_THREADS;
+    char* fname = NULL;
+    global.verbose = VER_NONE;
+    
+    char c;
+    while ((c = getopt(argc, argv, "v:t:f:")) != -1)
+    {
+        switch (c)
+        {
+        case 'v':
+            global.verbose = (Verbosity) atoi(optarg);
+            break;
+        
+        case 't':
+            num_threads = atoi(optarg);
+            break;
 
+        case 'f':
+            fname = optarg;
+            break;
+            
+        case '?':
+            std::cout << "Got unknown option." << std::endl; 
+            break;
 
+        default:
+            fprintf(stderr, "usage: %s [-v#] [-t#] -f filename", argv[0]);
+            exit(1);
+        }
+    }
 
-		//while current
-		bool continue_branching = true;
-		
-		while(continue_branching){
-			continue_branching = false;
+    if (fname == NULL) {
+        fprintf(stderr, "usage: %s [-v#] [-t#] -f filename", argv[0]);
+        exit(1);
+    }
 
-			if (global.graph->size()-current->size() <= SEQUENTIAL_THRESHOLD) {
-			branch_and_bound(current, local_shortest);
-			break;	
-			}
-
-
-			if (current->leaf()) {
-				throw std::runtime_error("A thread should never hit a leaf !");
-			} else {
-				// not yet a leaf
-				if (current->distance() < global.shortest->distance()) {
-					// continue branching
-
-					Path *new_current = new Path(global.graph);
-					for (int i=1; i<current->max(); i++) {
-						// if 1 put I in current
-						// else create job
-						if (!current->contains(i)) {
-							// Unique global malloc ?
-							Path *new_path = new Path(global.graph);
-							new_path->copy(current);
-							new_path->add(i);
-						
-							//if !newCurrent
-							if(!continue_branching) {
-								continue_branching = true;
-								new_current->copy(new_path);
-								//std::cout << "new Current for thread " << new_path << '\n';
-
-							} else {
-							//std::cout << "Adding new path to queue: " << new_path << '\n';
-							global.list.enqueue(new_path);
-							}
-							
-						}
-					}
-					if(continue_branching) {
-						current->copy(new_current);
-					} 
-					//delete new_current;
-				} else {
-					// current already >= shortest known so far, bound
-					if (global.verbose & VER_BOUND )
-						//std::cout << "bound " << current << '\n';
-					if (global.verbose & VER_COUNTERS)
-						global.counter.bound[current->size()] ++;
-
-					// remove to the total the factorial of the remaining paths not checked by the bound
-					global.total.fetch_sub(global.fact[current->size()]);
-				}
-				
-			}
-		//end while
-		}
-		delete current;
-	}
-
-<<<<<<< HEAD
-	if (global.shortest_cost.load() == local_shortest->distance()) {
-=======
-	
-
-	if (global.shortest_cost < local_shortest->distance()) {
-			int current_shortest = global.shortest_cost.load();	
-		while (current_shortest > local_shortest->distance() && 
-				!global.shortest_cost.compare_exchange_weak(current_shortest, local_shortest->distance())){
-			// Compare and set with retry for the shortest
-		}
->>>>>>> 0de0104 (test)
-		std::cout << "Shortest path found by thread " << (long)thread_id << std::endl;
-		global.shortest->copy(local_shortest);
-	}
-	
-	delete local_shortest;
-
-
-	std::cout << "Thread " << (long)thread_id << " finished" << std::endl;
-	pthread_exit(NULL); 
-=======
-=======
-// Fonction principale pour résoudre le problème du TSP
->>>>>>> 3eb16bc (comments)
-=======
->>>>>>> 4bd408c (restore)
-void solve_tsp(const char* fname, int num_threads) {
     global.graph = TSPFile::graph(fname);
-    global.shortest = new Path(global.graph);
-
     if (global.verbose & VER_GRAPH)
         std::cout << COLOR.BLUE << global.graph << COLOR.ORIGINAL;
 
-    global.counter.bound = new std::atomic<int>[global.graph->size()];
+    reset_counters(global.graph->size());
+
+    global.shortest = new Path(global.graph);
     for (int i = 0; i < global.graph->size(); i++) {
-        global.counter.bound[i] = 0;
         global.shortest->add(i);
     }
     global.shortest->add(0);
     global.shortest_cost = global.shortest->distance();
 
-    parallel_solve(num_threads);
+    Path* initial_path = new Path(global.graph);
+    initial_path->add(0);
+    global.list.enqueue(initial_path);
+
+    start_threads(num_threads);
 
     std::cout << COLOR.RED << "shortest " << global.shortest << COLOR.ORIGINAL << '\n';
 
-    if (global.verbose & VER_COUNTERS) {
-        std::cout << "verified: " << global.counter.verified << '\n';
-        std::cout << "found shorter: " << global.counter.found << '\n';
-        std::cout << "bound (per level):";
-        for (int i = 0; i < global.graph->size(); i++)
-            std::cout << ' ' << global.counter.bound[i];
-        std::cout << '\n';
-    }
->>>>>>> 9f3b8f6 (improvement)
-}
+    if (global.verbose & VER_COUNTERS)
+        print_counters();
 
-int main(int argc, char* argv[]) {
-    int num_threads = DEFAULT_NUM_THREADS;
-<<<<<<< HEAD
-<<<<<<< HEAD
-    char* fname = nullptr;
-    global.verbose = VER_NONE;
+    // Nettoyage final
+    delete global.shortest;
+    delete[] global.counter.bound;
+    delete[] global.fact;
+    delete global.graph;
 
-<<<<<<< HEAD
-	pthread_t threads[num_threads];
-	for (int i = 0; i < num_threads; i++) {
-		int rc = pthread_create(&threads[i], NULL, thread_routine, (void *)i);
-		if (rc) {
-			std::cout << "Error:unable to create thread," << rc << std::endl;
-         	exit(-1);
-		}
-	}
-=======
-    char c;
-    while ((c = getopt(argc, argv, "v:t:f:")) != -1) {
-        switch (c) {
-            case 'v':
-                global.verbose = (Verbosity)atoi(optarg);
-                break;
-            case 't':
-                num_threads = atoi(optarg);
-                break;
-            case 'f':
-                fname = optarg;
-                break;
-            default:
-                fprintf(stderr, "usage: %s [-v#] [-t#] -f filename\n", argv[0]);
-                exit(1);
-        }
-    }
->>>>>>> 9f3b8f6 (improvement)
-
-    if (fname == nullptr) {
-        fprintf(stderr, "usage: %s [-v#] [-t#] -f filename\n", argv[0]);
-        exit(1);
-    }
-
-<<<<<<< HEAD
-int main(int argc, char* argv[])
-{
-	int num_threads = DEFAULT_NUM_THREADS;
-
-	char* fname = NULL;
-	global.verbose = VER_NONE;
-	
-	char c;
-	while ((c = getopt(argc, argv, "v:t:f:")) != -1)
-	{
-		switch (c)
-		{
-		case 'v':
-			global.verbose = (Verbosity) atoi(optarg);
-			break;
-		
-		case 't':
-			num_threads = atoi(optarg);
-			break;
-
-		case 'f':
-			fname = optarg;
-			break;
-			
-		case '?':
-			std::cout << "Got unknown option." << std::endl; 
-			break;
-
-		default:
-			fprintf(stderr, "usage: %s [-v#] [-t#] -f filename", argv[0]);
-			exit(1);
-		}
-	}
-
-	if (fname == NULL) {
-		fprintf(stderr, "usage: %s [-v#] [-t#] -f filename", argv[0]);
-		exit(1);
-	}
-	
-
-	global.graph = TSPFile::graph(fname);
-	if (global.verbose & VER_GRAPH)
-		std::cout << COLOR.BLUE << global.graph << COLOR.ORIGINAL;
-
-	// if (global.verbose & VER_COUNTERS)
-	reset_counters(global.graph->size());
-
-	global.shortest = new Path(global.graph);
-	for (int i=0; i<global.graph->size(); i++) {
-		global.shortest->add(i);
-	}
-	global.shortest->add(0);
-	global.shortest_cost = global.shortest->distance();
-
-	Path* current = new Path(global.graph);
-	current->add(0);
-	global.list.enqueue(current);
-
-	start_threads(num_threads);
-
-	std::cout << COLOR.RED << "shortest " << global.shortest << COLOR.ORIGINAL << '\n';
-
-	if (global.verbose & VER_COUNTERS)
-		//print_counters();
-
-	return 0;
-}
-=======
-    solve_tsp(fname, num_threads);
     return 0;
 }
->>>>>>> 9f3b8f6 (improvement)
-=======
-    if (argc > 1) {
-        num_threads = std::stoi(argv[1]);  // Nombre de threads
-    }
-    const char* fname = argv[2];  // Nom du fichier à traiter
-
-    solve_tsp(fname, num_threads);  // Résolution du problème
-}
->>>>>>> 3eb16bc (comments)
-=======
-    char* fname = nullptr;
-    global.verbose = VER_NONE;
-
-    char c;
-    while ((c = getopt(argc, argv, "v:t:f:")) != -1) {
-        switch (c) {
-            case 'v':
-                global.verbose = (Verbosity)atoi(optarg);
-                break;
-            case 't':
-                num_threads = atoi(optarg);
-                break;
-            case 'f':
-                fname = optarg;
-                break;
-            default:
-                fprintf(stderr, "usage: %s [-v#] [-t#] -f filename\n", argv[0]);
-                exit(1);
-        }
-    }
-
-    if (fname == nullptr) {
-        fprintf(stderr, "usage: %s [-v#] [-t#] -f filename\n", argv[0]);
-        exit(1);
-    }
-
-    solve_tsp(fname, num_threads);
-    return 0;
-}
->>>>>>> 4bd408c (restore)

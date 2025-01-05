@@ -5,15 +5,7 @@ COMMENT : This file is a corrected version of dj89, where duplications
 COMMENT:  have been removed.  Thanks to Jay Muthuswamy and others for
 COMMENT:  requesting data sets without duplications.
 TYPE: TSP
-<<<<<<< HEAD
-<<<<<<< HEAD
-DIMENSION: 17
-=======
-DIMENSION: 19
->>>>>>> 86ce612 (18 towns)
-=======
 DIMENSION: 15
->>>>>>> 4bd408c (restore)
 EDGE_WEIGHT_TYPE: EUC_2D
 NODE_COORD_SECTION
 1 11003.611100 42102.500000
