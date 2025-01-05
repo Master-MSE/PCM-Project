@@ -85,44 +85,32 @@ static void branch_and_bound(Path* current, Path* shortest_local_to_thread)
 			global.counter.found ++;
 
 		current->pop();
+		
+		return;
+	} 
 
-		// // this is a leaf
-		// current->add(0);
-		// if (global.verbose & VER_COUNTERS)
-		// 	global.counter.verified ++;
-		// if (current->distance() < global.shortest->distance()) {
-		// 	if (global.verbose & VER_SHORTER)
-		// 		std::cout << "shorter: " << current << '\n';
-		// 	global.shortest->copy(current);
-		// 	if (global.verbose & VER_COUNTERS)
-		// 		global.counter.found ++;
-		// }
-		// current->pop();
 
-		// global.total--;
-
-	} else {
-		// not yet a leaf
-		if (current->distance() < global.shortest->distance()) {
-			// continue branching
-			for (int i=1; i<current->max(); i++) {
-				if (!current->contains(i)) {
-					current->add(i);
-					branch_and_bound(current, shortest_local_to_thread);
-					current->pop();
-				}
+	if (current->distance() < global.shortest_cost.load()) {
+		// continue branching
+		for (int i=1; i<current->max(); i++) {
+			if (!current->contains(i)) {
+				current->add(i);
+				branch_and_bound(current, shortest_local_to_thread);
+				current->pop();
 			}
-		} else {
-			// current already >= shortest known so far, bound
-			if (global.verbose & VER_BOUND )
-				std::cout << "bound " << current << '\n';
-			if (global.verbose & VER_COUNTERS)
-				global.counter.bound[current->size()] ++;
-			
-			// remove to the total the factorial of the remaining paths not checked by the bound
-			global.total.fetch_sub(global.fact[current->size()]);
 		}
+		return;
 	}
+
+	// current already >= shortest known so far, bound
+	if (global.verbose & VER_BOUND )
+		std::cout << "bound " << current << '\n';
+	if (global.verbose & VER_COUNTERS)
+		global.counter.bound[current->size()] ++;
+	
+	// remove to the total the factorial of the remaining paths not checked by the bound
+	global.total.fetch_sub(global.fact[current->size()]);
+	
 }
 
 
