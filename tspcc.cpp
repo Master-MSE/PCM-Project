@@ -10,6 +10,7 @@
 #include "listcc.hpp"
 #include <pthread.h>
 #include <unistd.h>
+#include <vector>
 
 #define _CRT_SECURE_NO_WARNINGS // evite les erreurs
 
@@ -54,10 +55,8 @@ static const struct {
 
 static void branch_and_bound(Path* current, Path* shortest_local_to_thread)
 {
-	if (global.verbose & VER_ANALYSE){
-		//std::cout << "analysing " << cu<rrent << '\n';
-	}
-		
+	if (global.verbose & VER_ANALYSE)
+		std::cout << "analysing " << current << '\n';
 
 	if (current->leaf()) {
 		// this is a leaf
@@ -73,17 +72,14 @@ static void branch_and_bound(Path* current, Path* shortest_local_to_thread)
 			return;
 		}
 
-		/*
-				int current_shortest = global.shortest_cost.load();	
+		int current_shortest = global.shortest_cost.load();	
 		while (current_shortest > current->distance() && 
 				!global.shortest_cost.compare_exchange_weak(current_shortest, current->distance())){
 			// Compare and set with retry for the shortest
 		}
-		*/
-
 
 		if (global.verbose & VER_SHORTER)
-			//std::cout << "local shorter: " << current << '\n';
+			std::cout << "local shorter: " << current << '\n';
 
 		shortest_local_to_thread->copy(current);
 		
@@ -121,7 +117,7 @@ static void branch_and_bound(Path* current, Path* shortest_local_to_thread)
 		} else {
 			// current already >= shortest known so far, bound
 			if (global.verbose & VER_BOUND )
-				//std::cout << "bound " << current << '\n';
+				std::cout << "bound " << current << '\n';
 			if (global.verbose & VER_COUNTERS)
 				global.counter.bound[current->size()] ++;
 			
@@ -185,79 +181,42 @@ void *thread_routine(void *thread_id) {
 			continue;
 		}
 
-
-
-		//while current
-		bool continue_branching = true;
-		
-		while(continue_branching){
-			continue_branching = false;
-
-			if (global.graph->size()-current->size() <= SEQUENTIAL_THRESHOLD) {
+		if (global.graph->size()-current->size() <= SEQUENTIAL_THRESHOLD) {
 			branch_and_bound(current, local_shortest);
-			break;	
-			}
+			continue;		
+		}
 
+		if (current->leaf()) {
+			throw std::runtime_error("A thread should never hit a leaf !");
+		} else {
+			// not yet a leaf
+			if (current->distance() < global.shortest->distance()) {
+				// continue branching
+				for (int i=1; i<current->max(); i++) {
+					if (!current->contains(i)) {
+						// Unique global malloc ?
+						Path *new_path = new Path(global.graph);
+						new_path->copy(current);
 
-			if (current->leaf()) {
-				throw std::runtime_error("A thread should never hit a leaf !");
-			} else {
-				// not yet a leaf
-				if (current->distance() < global.shortest->distance()) {
-					// continue branching
-
-					Path *new_current = new Path(global.graph);
-					for (int i=1; i<current->max(); i++) {
-						// if 1 put I in current
-						// else create job
-						if (!current->contains(i)) {
-							// Unique global malloc ?
-							Path *new_path = new Path(global.graph);
-							new_path->copy(current);
-							new_path->add(i);
-						
-							//if !newCurrent
-							if(!continue_branching) {
-								continue_branching = true;
-								new_current->copy(new_path);
-								//std::cout << "new Current for thread " << new_path << '\n';
-
-							} else {
-							//std::cout << "Adding new path to queue: " << new_path << '\n';
-							global.list.enqueue(new_path);
-							}
-							
-						}
+						new_path->add(i);
+						global.list.enqueue(new_path);
 					}
-					if(continue_branching) {
-						current->copy(new_current);
-					} 
-					//delete new_current;
-				} else {
-					// current already >= shortest known so far, bound
-					if (global.verbose & VER_BOUND )
-						//std::cout << "bound " << current << '\n';
-					if (global.verbose & VER_COUNTERS)
-						global.counter.bound[current->size()] ++;
-
-					// remove to the total the factorial of the remaining paths not checked by the bound
-					global.total.fetch_sub(global.fact[current->size()]);
 				}
-				
+			} else {
+				// current already >= shortest known so far, bound
+				if (global.verbose & VER_BOUND )
+					std::cout << "bound " << current << '\n';
+				if (global.verbose & VER_COUNTERS)
+					global.counter.bound[current->size()] ++;
+
+				// remove to the total the factorial of the remaining paths not checked by the bound
+				global.total.fetch_sub(global.fact[current->size()]);
 			}
-		//end while
 		}
 		delete current;
 	}
 
-	
-
-	if (global.shortest_cost < local_shortest->distance()) {
-			int current_shortest = global.shortest_cost.load();	
-		while (current_shortest > local_shortest->distance() && 
-				!global.shortest_cost.compare_exchange_weak(current_shortest, local_shortest->distance())){
-			// Compare and set with retry for the shortest
-		}
+	if (global.shortest_cost == local_shortest->distance()) {
 		std::cout << "Shortest path found by thread " << (long)thread_id << std::endl;
 		global.shortest->copy(local_shortest);
 	}
@@ -270,9 +229,9 @@ void *thread_routine(void *thread_id) {
 void start_threads(int num_threads) {
 	std::cout << "Starting " << num_threads << " threads..." << std::endl;
 
-	pthread_t threads[num_threads];
+std::vector<pthread_t> threads(num_threads);
 	for (int i = 0; i < num_threads; i++) {
-		int rc = pthread_create(&threads[i], NULL, thread_routine, (void *)i);
+int rc = pthread_create(&threads[i], NULL, thread_routine, (void *)(intptr_t)i);
 		if (rc) {
 			std::cout << "Error:unable to create thread," << rc << std::endl;
          	exit(-1);
@@ -352,7 +311,7 @@ int main(int argc, char* argv[])
 	std::cout << COLOR.RED << "shortest " << global.shortest << COLOR.ORIGINAL << '\n';
 
 	if (global.verbose & VER_COUNTERS)
-		//print_counters();
+		print_counters();
 
 	return 0;
 }
