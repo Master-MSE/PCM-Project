@@ -170,6 +170,7 @@ void *thread_routine(void *thread_id) {
 
 		if (global.graph->size()-current->size() <= SEQUENTIAL_THRESHOLD) {
 			branch_and_bound(current, local_shortest);
+			delete current;
 			continue;		
 		}
 
@@ -199,6 +200,7 @@ void *thread_routine(void *thread_id) {
 				global.total.fetch_sub(global.fact[current->size()]);
 			}
 		}
+
 		delete current;
 	}
 
