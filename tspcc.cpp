@@ -113,7 +113,6 @@ static void branch_and_bound(Path* current, Path* shortest_local_to_thread)
 	
 }
 
-
 void reset_counters(int size)
 {
 	global.size = size;
@@ -176,43 +175,42 @@ void *thread_routine(void *thread_id) {
 
 		if (current->leaf()) {
 			throw std::runtime_error("A thread should never hit a leaf !");
-		} else {
-			// not yet a leaf
-			if (current->distance() < global.shortest->distance()) {
-				// continue branching
-				for (int i=1; i<current->max(); i++) {
-					if (!current->contains(i)) {
-						Path *new_path = new Path(global.graph);
-						new_path->copy(current);
-
-						new_path->add(i);
-						global.list.enqueue(new_path);
-					}
-				}
-			} else {
-				// current already >= shortest known so far, bound
-				if (global.verbose & VER_BOUND )
-					std::cout << "bound " << current << '\n';
-				if (global.verbose & VER_COUNTERS)
-					global.counter.bound[current->size()] ++;
-
-				// remove to the total the factorial of the remaining paths not checked by the bound
-				global.total.fetch_sub(global.fact[current->size()]);
-			}
 		}
+		// not yet a leaf
+		if (current->distance() < global.shortest->distance()) {
+			// continue branching
+			for (int i=1; i<current->max(); i++) {
+				if (!current->contains(i)) {
+					Path *new_path = new Path(global.graph);
+					new_path->copy(current);
+
+					new_path->add(i);
+					global.list.enqueue(new_path);
+				}
+			}
+
+			delete current;
+			continue;
+		}
+		// current already >= shortest known so far, bound
+		if (global.verbose & VER_BOUND )
+			std::cout << "bound " << current << '\n';
+		if (global.verbose & VER_COUNTERS)
+			global.counter.bound[current->size()] ++;
+
+		// remove to the total the factorial of the remaining paths not checked by the bound
+		global.total.fetch_sub(global.fact[current->size()]);
 
 		delete current;
 	}
 
 	if (global.shortest_cost.load() == local_shortest->distance()) {
-		std::cout << "Shortest path found by thread " << (long)thread_id << std::endl;
+		std::cout << "Shortest path found by thread " << *(int *)thread_id << std::endl;
 		global.shortest->copy(local_shortest);
 	}
 	
 	delete local_shortest;
-
-
-	std::cout << "Thread " << (long)thread_id << " finished" << std::endl;
+	delete (int*)thread_id;
 	pthread_exit(NULL); 
 }
 
@@ -221,7 +219,7 @@ void start_threads(int num_threads) {
 
 	pthread_t threads[num_threads];
 	for (int i = 0; i < num_threads; i++) {
-		int rc = pthread_create(&threads[i], NULL, thread_routine, (void *)i);
+		int rc = pthread_create(&threads[i], NULL, thread_routine, new int(i));
 		if (rc) {
 			std::cout << "Error:unable to create thread," << rc << std::endl;
          	exit(-1);
@@ -235,6 +233,7 @@ void start_threads(int num_threads) {
 			std::cout << "Error:unable to join thread," << rc << std::endl;
          	exit(-1);
 		}
+		std::cout << "Thread " << i << " finished" << std::endl;
 	}
 }
 

@@ -78,9 +78,13 @@ def plot_efficiency(times, labels=None):
     plt.show()
 
 if __name__ == "__main__":
-    with open('export.json', 'r') as file:
-        data = json.load(file)
-    
+    try:
+        with open('export.json', 'r') as file:
+            data = json.load(file)
+    except:
+        print("Couldn't open results file export.json")
+        exit(1)
+
     x = []
     heights = []
     for i, result in enumerate(data["results"]):
@@ -88,9 +92,3 @@ if __name__ == "__main__":
         heights.append(result["mean"])
 
     plot_speedup(heights, x)
-
-    # plt.title("Execution time by thread count")
-    # plt.xlabel("Thread count")
-    # plt.ylabel(y_label)
-    # plt.bar(x, heights)
-    # plt.show()
