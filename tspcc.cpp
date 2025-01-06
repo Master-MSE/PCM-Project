@@ -181,7 +181,6 @@ void *thread_routine(void *thread_id) {
 				// continue branching
 				for (int i=1; i<current->max(); i++) {
 					if (!current->contains(i)) {
-						// Unique global malloc ?
 						Path *new_path = new Path(global.graph);
 						new_path->copy(current);
 
